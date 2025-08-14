@@ -1,0 +1,3 @@
+! Title: YT anti-antiadblock (Matthieu)
+! Expires: 1 day
+youtube.com##+js(set, yt.config_.openPopupConfig.supportedPopups.adBlockMessageViewModel, false)
