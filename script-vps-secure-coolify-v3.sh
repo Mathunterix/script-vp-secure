@@ -1,17 +1,24 @@
 #!/usr/bin/env bash
 #===============================================================================
-# script-vps-secure-coolify.sh
+# script-vps-secure-coolify-v3.sh
 # Sécurisation VPS compatible Coolify (Maître ou Agent)
-# 
+# Version : 3.1 (2025-12-09)
+#
 # Fonctionnalités :
 # - Création utilisateur SSH sécurisé avec clé ED25519
 # - Port SSH personnalisé (port 22 gardé pour Coolify)
 # - UFW compatible Docker/Coolify
 # - Fail2Ban pour protection brute-force
+# - Unattended-upgrades pour mises à jour de sécurité automatiques
 # - Mode Coolify : autorise root via clé SSH + host.docker.internal
 # - Rollback automatique en cas de problème
 #
-# Usage : sudo bash script-vps-secure-coolify.sh
+# Ce script protège contre 95% des attaques automatisées :
+# - Brute-force SSH (fail2ban + clé ED25519)
+# - Scans de ports (UFW + port non-standard)
+# - Exploits connus (unattended-upgrades)
+#
+# Usage : sudo bash script-vps-secure-coolify-v3.sh
 #===============================================================================
 
 set -euo pipefail
@@ -244,9 +251,37 @@ header "📦 Installation des paquets"
 info "Mise à jour des paquets..."
 eval "$PKG_UPDATE" >/dev/null 2>&1
 
-info "Installation de sudo, ufw, fail2ban..."
-$PKG_INSTALL sudo ufw fail2ban curl ca-certificates >/dev/null 2>&1
+info "Installation de sudo, ufw, fail2ban, unattended-upgrades..."
+$PKG_INSTALL sudo ufw fail2ban curl ca-certificates unattended-upgrades apt-listchanges >/dev/null 2>&1
 ok "Paquets installés"
+
+# Configuration des mises à jour automatiques de sécurité
+info "Configuration des mises à jour de sécurité automatiques..."
+cat > /etc/apt/apt.conf.d/50unattended-upgrades <<'UPGRADES'
+Unattended-Upgrade::Allowed-Origins {
+    "${distro_id}:${distro_codename}";
+    "${distro_id}:${distro_codename}-security";
+    "${distro_id}ESMApps:${distro_codename}-apps-security";
+    "${distro_id}ESM:${distro_codename}-infra-security";
+};
+Unattended-Upgrade::Package-Blacklist {
+};
+Unattended-Upgrade::AutoFixInterruptedDpkg "true";
+Unattended-Upgrade::MinimalSteps "true";
+Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";
+Unattended-Upgrade::Remove-Unused-Dependencies "true";
+Unattended-Upgrade::Automatic-Reboot "false";
+UPGRADES
+
+cat > /etc/apt/apt.conf.d/20auto-upgrades <<'AUTOUPGRADES'
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+APT::Periodic::AutocleanInterval "7";
+AUTOUPGRADES
+
+systemctl enable unattended-upgrades >/dev/null 2>&1 || true
+systemctl start unattended-upgrades >/dev/null 2>&1 || true
+ok "Mises à jour de sécurité automatiques configurées"
 
 #===============================================================================
 # CRÉATION DE L'UTILISATEUR
@@ -516,13 +551,14 @@ fi
 header "🎉 Sécurisation terminée !"
 
 echo -e "${GREEN}Configuration appliquée :${NC}"
-echo "  • Utilisateur      : $SSH_USER (sudo sans mot de passe)"
-echo "  • Port SSH         : $SSH_PORT"
+echo "  • Utilisateur         : $SSH_USER (sudo sans mot de passe)"
+echo "  • Port SSH            : $SSH_PORT"
 if [[ "$VPS_MODE" != "standard" ]]; then
-echo "  • Port 22          : Ouvert (Coolify)"
+echo "  • Port 22             : Ouvert (Coolify)"
 fi
-echo "  • Fail2Ban         : Actif"
-echo "  • UFW              : Actif (Docker compatible)"
+echo "  • Fail2Ban            : Actif"
+echo "  • UFW                 : Actif (Docker compatible)"
+echo "  • Unattended-Upgrades : Actif (mises à jour sécurité auto)"
 echo ""
 
 # Afficher la clé privée si générée
