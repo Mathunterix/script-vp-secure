@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #===============================================================================
-# script-vps-secure-coolify-v5.sh
+# script-vps-secure-coolify-v6.sh
 # Securisation VPS compatible Coolify (Master ou Remote)
-# Version : 5.0 (2025-12-09)
+# Version : 6.0 (2025-12-09)
 #
 # Fonctionnalites :
 # - Creation utilisateur SSH securise avec cle ED25519
@@ -74,7 +74,7 @@ show_banner() {
     echo " |____/ \\___|\\___|\\__,_|_|  |_|\\__|\\__, |    \\_/  |_|   |____/ "
     echo "                                   |___/                        "
     echo -e "${NC}"
-    echo -e "${DIM}Script de securisation VPS compatible Coolify v5.0${NC}"
+    echo -e "${DIM}Script de securisation VPS compatible Coolify v6.0${NC}"
     echo -e "${DIM}Auteur: Formation Vibecoding${NC}"
     echo ""
 }
@@ -460,16 +460,61 @@ fi
 #-------------------------------------------------------------------------------
 section "ETAPE 5/6 : Cle SSH"
 
-show_explanation "Generation de cle SSH ED25519" \
+# Verifier si une cle existe deja
+SSH_DIR_CHECK="/home/$SSH_USER/.ssh"
+EXISTING_KEYS=0
+if [[ -f "$SSH_DIR_CHECK/authorized_keys" ]]; then
+    EXISTING_KEYS=$(grep -c "ssh-" "$SSH_DIR_CHECK/authorized_keys" 2>/dev/null || echo "0")
+fi
+
+if [[ "$EXISTING_KEYS" -gt 0 ]]; then
+    show_explanation "Cles SSH existantes detectees" \
+"$EXISTING_KEYS cle(s) SSH trouvee(s) pour l'utilisateur $SSH_USER.
+Vous pouvez :
+- AJOUTER une nouvelle cle (les anciennes restent valides)
+- REMPLACER toutes les cles (les anciennes seront supprimees)"
+
+    prompt_yn GEN_KEYS \
+        "Generer une nouvelle cle SSH ED25519 ?" \
+        "oui" \
+        "Recommande pour renforcer la securite"
+
+    if [[ "$GEN_KEYS" == "oui" ]]; then
+        prompt_choice KEY_MODE "Que faire avec les cles existantes ?" "1" \
+            "AJOUTER - Garder les anciennes cles + ajouter la nouvelle" \
+            "REMPLACER - Supprimer les anciennes cles (attention!)"
+
+        case "$KEY_MODE" in
+            1) REPLACE_KEYS="non" ;;
+            2) REPLACE_KEYS="oui" ;;
+        esac
+
+        if [[ "$REPLACE_KEYS" == "oui" ]]; then
+            warn "Les anciennes cles seront supprimees. Assurez-vous d'avoir acces au serveur !"
+        fi
+    fi
+else
+    show_explanation "Generation de cle SSH ED25519" \
 "Une cle ED25519 est plus securisee et plus rapide que RSA.
 Si vous avez deja une cle, vous pouvez la configurer manuellement apres."
 
-prompt_yn GEN_KEYS \
-    "Generer une nouvelle cle SSH ED25519 ?" \
-    "oui" \
-    "Recommande si c'est votre premiere configuration"
+    prompt_yn GEN_KEYS \
+        "Generer une nouvelle cle SSH ED25519 ?" \
+        "oui" \
+        "Recommande si c'est votre premiere configuration"
 
-ok "Generation de cle : $GEN_KEYS"
+    REPLACE_KEYS="non"
+fi
+
+if [[ "$GEN_KEYS" == "oui" ]]; then
+    if [[ "${REPLACE_KEYS:-non}" == "oui" ]]; then
+        ok "Generation de cle : Oui (REMPLACER les anciennes)"
+    else
+        ok "Generation de cle : Oui (ajouter)"
+    fi
+else
+    ok "Generation de cle : Non"
+fi
 
 #-------------------------------------------------------------------------------
 # ETAPE 6 : Options supplementaires
@@ -667,6 +712,16 @@ if [[ "$GEN_KEYS" == "oui" ]]; then
     mkdir -p "$SSH_DIR"
     chmod 700 "$SSH_DIR"
 
+    # Si remplacement demande, sauvegarder et vider authorized_keys
+    if [[ "${REPLACE_KEYS:-non}" == "oui" ]]; then
+        if [[ -f "$SSH_DIR/authorized_keys" ]]; then
+            cp "$SSH_DIR/authorized_keys" "$SSH_DIR/authorized_keys.bak_$TIMESTAMP"
+            ok "Backup anciennes cles : $SSH_DIR/authorized_keys.bak_$TIMESTAMP"
+            > "$SSH_DIR/authorized_keys"
+            info "Anciennes cles supprimees"
+        fi
+    fi
+
     PRIV_KEY_PATH="$SSH_DIR/id_ed25519_$TIMESTAMP"
     ssh-keygen -t ed25519 -N "" -f "$PRIV_KEY_PATH" -C "$SSH_USER@$(hostname)" >/dev/null 2>&1
 
@@ -675,7 +730,11 @@ if [[ "$GEN_KEYS" == "oui" ]]; then
     chmod 600 "$SSH_DIR/authorized_keys"
     chown -R "$SSH_USER:$SSH_USER" "$SSH_DIR"
 
-    ok "Cle ED25519 generee"
+    if [[ "${REPLACE_KEYS:-non}" == "oui" ]]; then
+        ok "Nouvelle cle ED25519 generee (anciennes remplacees)"
+    else
+        ok "Nouvelle cle ED25519 generee (ajoutee aux existantes)"
+    fi
 fi
 
 #===============================================================================

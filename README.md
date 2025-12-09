@@ -1,11 +1,11 @@
-# Script VPS Secure v5 - Compatible Coolify
+# Script VPS Secure v6 - Compatible Coolify
 
 Script de securisation VPS pour vibecoders. Configure un serveur securise en 5 minutes, compatible avec Coolify.
 
 ## Installation rapide
 
 ```bash
-sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/Mathunterix/script-vp-secure/main/script-vps-secure-coolify-v5.sh)"
+sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/Mathunterix/script-vp-secure/main/script-vps-secure-coolify-v6.sh)"
 ```
 
 ---
@@ -97,7 +97,7 @@ passwd
 
 ### 3. Executer le script
 ```bash
-sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/Mathunterix/script-vp-secure/main/script-vps-secure-coolify-v5.sh)"
+sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/Mathunterix/script-vp-secure/main/script-vps-secure-coolify-v6.sh)"
 ```
 
 ### 4. Suivre l'assistant interactif
@@ -173,7 +173,12 @@ echo "CLE_PUBLIQUE_COOLIFY" >> /root/.ssh/authorized_keys
 
 ## Changelog
 
-### v5.0 (2025-12-09)
+### v6.0 (2025-12-09)
+- Option AJOUTER ou REMPLACER les cles SSH existantes
+- Detection automatique des cles existantes
+- Backup des anciennes cles avant remplacement
+
+### v5.0
 - Ajout UFW avec configuration compatible Docker
 - Tableaux comparatifs Master vs Remote dans l'interface
 - Documentation des vraies differences basees sur la doc Coolify officielle
