@@ -705,6 +705,7 @@ fi
 # GENERATION DE CLE SSH
 #===============================================================================
 PRIV_KEY_PATH=""
+AUTH_KEYS_BAK=""
 if [[ "$GEN_KEYS" == "oui" ]]; then
     header "Generation de la cle SSH ED25519"
 
@@ -712,28 +713,25 @@ if [[ "$GEN_KEYS" == "oui" ]]; then
     mkdir -p "$SSH_DIR"
     chmod 700 "$SSH_DIR"
 
-    # Si remplacement demande, sauvegarder et vider authorized_keys
-    if [[ "${REPLACE_KEYS:-non}" == "oui" ]]; then
-        if [[ -f "$SSH_DIR/authorized_keys" ]]; then
-            cp "$SSH_DIR/authorized_keys" "$SSH_DIR/authorized_keys.bak_$TIMESTAMP"
-            ok "Backup anciennes cles : $SSH_DIR/authorized_keys.bak_$TIMESTAMP"
-            > "$SSH_DIR/authorized_keys"
-            info "Anciennes cles supprimees"
-        fi
+    # Backup des anciennes cles (pour remplacement eventuel APRES le test)
+    if [[ "${REPLACE_KEYS:-non}" == "oui" && -f "$SSH_DIR/authorized_keys" ]]; then
+        AUTH_KEYS_BAK="$SSH_DIR/authorized_keys.bak_$TIMESTAMP"
+        cp "$SSH_DIR/authorized_keys" "$AUTH_KEYS_BAK"
+        ok "Backup anciennes cles : $AUTH_KEYS_BAK"
+        info "Les anciennes cles seront supprimees APRES validation du test"
     fi
 
     PRIV_KEY_PATH="$SSH_DIR/id_ed25519_$TIMESTAMP"
     ssh-keygen -t ed25519 -N "" -f "$PRIV_KEY_PATH" -C "$SSH_USER@$(hostname)" >/dev/null 2>&1
 
-    # Installer la cle publique
+    # Installer la cle publique (AJOUTER pour le moment, meme si remplacement demande)
     cat "${PRIV_KEY_PATH}.pub" >> "$SSH_DIR/authorized_keys"
     chmod 600 "$SSH_DIR/authorized_keys"
     chown -R "$SSH_USER:$SSH_USER" "$SSH_DIR"
 
+    ok "Nouvelle cle ED25519 generee"
     if [[ "${REPLACE_KEYS:-non}" == "oui" ]]; then
-        ok "Nouvelle cle ED25519 generee (anciennes remplacees)"
-    else
-        ok "Nouvelle cle ED25519 generee (ajoutee aux existantes)"
+        warn "Les anciennes cles seront supprimees apres confirmation du test"
     fi
 fi
 
@@ -1061,6 +1059,26 @@ if [[ "$TEST_OK" != "oui" ]]; then
 fi
 
 ok "Configuration validee et permanente !"
+
+#===============================================================================
+# SUPPRESSION DES ANCIENNES CLES (si remplacement demande et test OK)
+#===============================================================================
+if [[ "${REPLACE_KEYS:-non}" == "oui" && -n "$AUTH_KEYS_BAK" && -f "$AUTH_KEYS_BAK" ]]; then
+    header "Finalisation du remplacement des cles"
+
+    SSH_DIR="/home/$SSH_USER/.ssh"
+
+    # Garder uniquement la nouvelle cle (derniere ligne ajoutee)
+    NEW_KEY=$(tail -1 "$SSH_DIR/authorized_keys")
+    echo "$NEW_KEY" > "$SSH_DIR/authorized_keys"
+    chmod 600 "$SSH_DIR/authorized_keys"
+    chown "$SSH_USER:$SSH_USER" "$SSH_DIR/authorized_keys"
+
+    ok "Anciennes cles supprimees"
+    ok "Backup conserve : $AUTH_KEYS_BAK"
+    info "Pour restaurer les anciennes cles si besoin :"
+    echo "  cat $AUTH_KEYS_BAK >> $SSH_DIR/authorized_keys"
+fi
 
 #===============================================================================
 # INSTRUCTIONS FINALES SELON LE MODE
