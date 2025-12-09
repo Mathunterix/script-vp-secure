@@ -1,21 +1,30 @@
 #!/usr/bin/env bash
 #===============================================================================
-# script-vps-secure-coolify-v4.sh
+# script-vps-secure-coolify-v5.sh
 # Securisation VPS compatible Coolify (Master ou Remote)
-# Version : 4.0 (2025-12-09)
+# Version : 5.0 (2025-12-09)
 #
 # Fonctionnalites :
 # - Creation utilisateur SSH securise avec cle ED25519
 # - Port SSH personnalise
+# - UFW configure (compatible Docker)
 # - Configuration optimisee selon le type de serveur (Master/Remote/Standard)
 # - Fail2Ban pour protection brute-force
 # - Unattended-upgrades pour mises a jour de securite automatiques
 # - Rollback automatique en cas de probleme
 #
-# IMPORTANT : UFW + Docker = probleme !
-# Docker bypass UFW via iptables. Utilisez le firewall de votre cloud provider.
+# DIFFERENCES MASTER vs REMOTE :
+# ┌─────────────────────┬─────────────────────┬─────────────────────┐
+# │                     │ MASTER              │ REMOTE              │
+# ├─────────────────────┼─────────────────────┼─────────────────────┤
+# │ Port 22             │ Ouvert (obligatoire)│ Ouvert (pour Coolify│
+# │ host.docker.internal│ OUI (obligatoire)   │ NON (pas necessaire)│
+# │ Ports 8000/6001/6002│ Ouverts (dashboard) │ NON                 │
+# │ Docker              │ Pre-installe        │ Installe par Coolify│
+# │ Root SSH            │ Via cle             │ Via cle             │
+# └─────────────────────┴─────────────────────┴─────────────────────┘
 #
-# Usage : sudo bash script-vps-secure-coolify-v4.sh
+# Usage : sudo bash script-vps-secure-coolify-v5.sh
 #===============================================================================
 
 set -euo pipefail
@@ -65,7 +74,7 @@ show_banner() {
     echo " |____/ \\___|\\___|\\__,_|_|  |_|\\__|\\__, |    \\_/  |_|   |____/ "
     echo "                                   |___/                        "
     echo -e "${NC}"
-    echo -e "${DIM}Script de securisation VPS compatible Coolify v4.0${NC}"
+    echo -e "${DIM}Script de securisation VPS compatible Coolify v5.0${NC}"
     echo -e "${DIM}Auteur: Formation Vibecoding${NC}"
     echo ""
 }
@@ -332,28 +341,46 @@ esac
 
 ok "Mode selectionne : ${VPS_MODE^^}"
 
-# Afficher les implications du choix
+# Afficher les implications du choix avec tableau comparatif
 echo ""
 case "$VPS_MODE" in
     master)
-        echo -e "${BLUE}Configuration Master Coolify :${NC}"
-        echo "  - Port 22 garde ouvert (requis par Coolify)"
-        echo "  - host.docker.internal configure"
-        echo "  - Ports 8000, 6001, 6002 a ouvrir temporairement"
-        echo "  - Root SSH via cle autorise"
+        echo -e "${BLUE}${BOLD}Configuration Master Coolify :${NC}"
+        echo ""
+        echo "  ┌────────────────────────┬─────────────────────────────────┐"
+        echo "  │ Port 22                │ OUVERT (obligatoire Coolify)    │"
+        echo "  │ host.docker.internal   │ CONFIGURE (obligatoire)         │"
+        echo "  │ Ports 8000/6001/6002   │ OUVERTS (fermer apres domaine)  │"
+        echo "  │ Root SSH               │ Via cle uniquement              │"
+        echo "  │ UFW                    │ Configure + Docker forwarding   │"
+        echo "  └────────────────────────┴─────────────────────────────────┘"
+        echo ""
+        echo -e "${DIM}Coolify utilise le port 22 pour communiquer avec lui-meme via Docker.${NC}"
         ;;
     remote)
-        echo -e "${BLUE}Configuration Remote Coolify :${NC}"
-        echo "  - Port SSH personnalise possible"
-        echo "  - Root SSH via cle autorise"
-        echo "  - Coolify installera Docker automatiquement"
-        echo "  - Pas besoin de host.docker.internal"
+        echo -e "${BLUE}${BOLD}Configuration Remote Coolify :${NC}"
+        echo ""
+        echo "  ┌────────────────────────┬─────────────────────────────────┐"
+        echo "  │ Port 22                │ OUVERT (pour connexion Coolify) │"
+        echo "  │ host.docker.internal   │ NON (pas necessaire)            │"
+        echo "  │ Ports 8000/6001/6002   │ NON (pas de dashboard)          │"
+        echo "  │ Root SSH               │ Via cle uniquement              │"
+        echo "  │ Docker                 │ Installe auto par Coolify       │"
+        echo "  │ UFW                    │ Configure + Docker forwarding   │"
+        echo "  └────────────────────────┴─────────────────────────────────┘"
+        echo ""
+        echo -e "${DIM}Coolify Master se connectera en SSH pour installer Docker et deployer.${NC}"
         ;;
     standard)
-        echo -e "${BLUE}Configuration Standard (securite max) :${NC}"
-        echo "  - Port 22 ferme"
-        echo "  - Root SSH desactive"
-        echo "  - UFW configure normalement"
+        echo -e "${BLUE}${BOLD}Configuration Standard (securite maximale) :${NC}"
+        echo ""
+        echo "  ┌────────────────────────┬─────────────────────────────────┐"
+        echo "  │ Port 22                │ FERME                           │"
+        echo "  │ Root SSH               │ DESACTIVE                       │"
+        echo "  │ UFW                    │ Configure (deny incoming)       │"
+        echo "  └────────────────────────┴─────────────────────────────────┘"
+        echo ""
+        echo -e "${DIM}Configuration classique sans Coolify, securite maximale.${NC}"
         ;;
 esac
 
@@ -478,6 +505,7 @@ echo "  IPs autorisees    : ${SSH_ALLOWED_IPS:-Toutes}"
 echo "  Generer cle       : $GEN_KEYS"
 echo ""
 echo -e "${BOLD}Securite${NC}"
+echo "  UFW               : Oui"
 echo "  Fail2Ban          : Oui"
 echo "  Updates auto      : Oui"
 echo "  Desactiver IPv6   : $DISABLE_IPV6"
@@ -486,12 +514,10 @@ echo ""
 
 # Avertissement UFW + Docker
 if [[ "$VPS_MODE" != "standard" ]]; then
-    echo -e "${YELLOW}${BOLD}AVERTISSEMENT IMPORTANT :${NC}"
-    echo -e "${YELLOW}Docker bypass UFW via iptables. Les regles UFW seront inefficaces${NC}"
-    echo -e "${YELLOW}pour les ports exposes par Docker/Coolify.${NC}"
-    echo ""
-    echo -e "${YELLOW}RECOMMANDATION : Utilisez le firewall de votre cloud provider${NC}"
-    echo -e "${YELLOW}(Hetzner, OVH, DigitalOcean, etc.) pour controler les ports.${NC}"
+    echo -e "${YELLOW}${BOLD}NOTE :${NC}"
+    echo -e "${YELLOW}Docker peut bypass UFW via iptables pour les ports des containers.${NC}"
+    echo -e "${YELLOW}UFW protege les services non-Docker. Pour une securite complete,${NC}"
+    echo -e "${YELLOW}utilisez aussi le firewall de votre cloud provider.${NC}"
     echo ""
 fi
 
@@ -507,6 +533,7 @@ prompt_yn CONFIRM \
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 SSHD_CFG="/etc/ssh/sshd_config"
 SSHD_BAK="/etc/ssh/sshd_config.bak_$TIMESTAMP"
+UFW_BAK="/root/ufw-backup-$TIMESTAMP.tgz"
 SYSCTL_FILE="/etc/sysctl.d/99-vps-secure.conf"
 ACTIONS_DONE=()
 
@@ -522,6 +549,16 @@ rollback() {
                 [[ -f "$SSHD_BAK" ]] && cp -f "$SSHD_BAK" "$SSHD_CFG"
                 systemctl restart "$SSH_SERVICE" 2>/dev/null || true
                 ok "SSH restaure"
+                ;;
+            ufw)
+                ufw --force disable 2>/dev/null || true
+                if [[ -f "$UFW_BAK" ]]; then
+                    tar xzf "$UFW_BAK" -C / 2>/dev/null || true
+                    ufw --force enable 2>/dev/null || true
+                else
+                    ufw --force reset 2>/dev/null || true
+                fi
+                ok "UFW restaure"
                 ;;
             sysctl)
                 rm -f "$SYSCTL_FILE" 2>/dev/null || true
@@ -550,13 +587,13 @@ header "Installation des paquets"
 info "Mise a jour des paquets..."
 eval "$PKG_UPDATE" >/dev/null 2>&1
 
-info "Installation de sudo, fail2ban, unattended-upgrades..."
+info "Installation de sudo, ufw, fail2ban, unattended-upgrades..."
 case "$DISTRO" in
     ubuntu|debian)
-        $PKG_INSTALL sudo fail2ban curl ca-certificates unattended-upgrades apt-listchanges >/dev/null 2>&1
+        $PKG_INSTALL sudo ufw fail2ban curl ca-certificates unattended-upgrades apt-listchanges >/dev/null 2>&1
         ;;
     centos|rocky|almalinux|fedora)
-        $PKG_INSTALL sudo fail2ban curl ca-certificates dnf-automatic >/dev/null 2>&1
+        $PKG_INSTALL sudo firewalld fail2ban curl ca-certificates dnf-automatic >/dev/null 2>&1
         ;;
 esac
 ok "Paquets installes"
@@ -717,6 +754,100 @@ if [[ "$VPS_MODE" == "master" ]]; then
     else
         ok "host.docker.internal deja present"
     fi
+fi
+
+#===============================================================================
+# CONFIGURATION UFW (Firewall)
+#===============================================================================
+header "Configuration Firewall (UFW)"
+
+# Backup UFW existant
+if [[ -d /etc/ufw ]]; then
+    tar czf "$UFW_BAK" /etc/ufw 2>/dev/null || true
+    ok "Backup UFW : $UFW_BAK"
+fi
+
+# Configuration pour compatibilite Docker
+if [[ -f /etc/default/ufw ]]; then
+    sed -i 's/^DEFAULT_FORWARD_POLICY=.*/DEFAULT_FORWARD_POLICY="ACCEPT"/' /etc/default/ufw
+    info "Docker forwarding active"
+fi
+
+if [[ -f /etc/ufw/sysctl.conf ]]; then
+    if grep -q '^#\?net/ipv4/ip_forward=' /etc/ufw/sysctl.conf; then
+        sed -i 's/^#\?net\/ipv4\/ip_forward=.*/net\/ipv4\/ip_forward=1/' /etc/ufw/sysctl.conf
+    else
+        echo 'net/ipv4/ip_forward=1' >> /etc/ufw/sysctl.conf
+    fi
+fi
+
+# Reset et configuration de base
+ufw --force reset >/dev/null 2>&1
+ufw default deny incoming >/dev/null 2>&1
+ufw default allow outgoing >/dev/null 2>&1
+
+# Loopback
+ufw allow in on lo >/dev/null 2>&1
+
+# HTTP/HTTPS (obligatoire pour services web et Let's Encrypt)
+ufw allow 80/tcp comment 'HTTP' >/dev/null 2>&1
+ufw allow 443/tcp comment 'HTTPS' >/dev/null 2>&1
+ok "Ports HTTP/HTTPS ouverts (80, 443)"
+
+# SSH personnalise
+if [[ -n "$SSH_ALLOWED_IPS" ]]; then
+    for ip in $SSH_ALLOWED_IPS; do
+        ufw allow from "$ip" to any port "$SSH_PORT" proto tcp comment "SSH custom" >/dev/null 2>&1
+    done
+    info "SSH port $SSH_PORT restreint aux IPs : $SSH_ALLOWED_IPS"
+else
+    ufw allow "$SSH_PORT"/tcp comment 'SSH custom' >/dev/null 2>&1
+    info "SSH port $SSH_PORT ouvert"
+fi
+
+# Port 22 pour Coolify (modes master et remote)
+case "$VPS_MODE" in
+    master)
+        ufw allow 22/tcp comment 'SSH Coolify' >/dev/null 2>&1
+        info "Port 22 ouvert (Coolify Master)"
+        # Ports dashboard Coolify (temporaires)
+        ufw allow 8000/tcp comment 'Coolify Dashboard' >/dev/null 2>&1
+        ufw allow 6001/tcp comment 'Coolify Realtime' >/dev/null 2>&1
+        ufw allow 6002/tcp comment 'Coolify Terminal' >/dev/null 2>&1
+        info "Ports Coolify ouverts (8000, 6001, 6002) - a fermer apres config domaine"
+        ;;
+    remote)
+        # En mode remote, on peut restreindre le port 22 a l'IP du master
+        if [[ -n "$SSH_ALLOWED_IPS" ]]; then
+            for ip in $SSH_ALLOWED_IPS; do
+                ufw allow from "$ip" to any port 22 proto tcp comment "SSH Coolify Master" >/dev/null 2>&1
+            done
+            info "Port 22 restreint aux IPs Coolify Master"
+        else
+            ufw allow 22/tcp comment 'SSH Coolify' >/dev/null 2>&1
+            info "Port 22 ouvert (Coolify Remote)"
+        fi
+        ;;
+    standard)
+        # Pas de port 22 en mode standard
+        info "Port 22 ferme (mode standard)"
+        ;;
+esac
+
+# Activer UFW
+register_action "ufw"
+ufw --force enable >/dev/null 2>&1
+ok "UFW configure et active"
+
+# Afficher le statut
+echo ""
+info "Regles UFW actives :"
+ufw status numbered 2>/dev/null | head -20
+
+if [[ "$VPS_MODE" != "standard" ]]; then
+    echo ""
+    warn "RAPPEL: Docker peut bypass UFW via iptables."
+    warn "Pour une securite complete, utilisez aussi le firewall de votre cloud provider."
 fi
 
 #===============================================================================
