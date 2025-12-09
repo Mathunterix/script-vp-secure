@@ -580,6 +580,7 @@ SSHD_CFG="/etc/ssh/sshd_config"
 SSHD_BAK="/etc/ssh/sshd_config.bak_$TIMESTAMP"
 UFW_BAK="/root/ufw-backup-$TIMESTAMP.tgz"
 SYSCTL_FILE="/etc/sysctl.d/99-vps-secure.conf"
+AUTH_KEYS_ORIGINAL=""  # Sera defini plus tard si des cles existent
 ACTIONS_DONE=()
 
 register_action() { ACTIONS_DONE+=("$1"); }
@@ -594,6 +595,13 @@ rollback() {
                 [[ -f "$SSHD_BAK" ]] && cp -f "$SSHD_BAK" "$SSHD_CFG"
                 systemctl restart "$SSH_SERVICE" 2>/dev/null || true
                 ok "SSH restaure"
+                ;;
+            ssh_keys)
+                # Restaurer les cles SSH originales
+                if [[ -n "$AUTH_KEYS_ORIGINAL" && -f "$AUTH_KEYS_ORIGINAL" ]]; then
+                    cp -f "$AUTH_KEYS_ORIGINAL" "${AUTH_KEYS_ORIGINAL%.original_$TIMESTAMP}"
+                    ok "Cles SSH restaurees"
+                fi
                 ;;
             ufw)
                 ufw --force disable 2>/dev/null || true
@@ -713,11 +721,18 @@ if [[ "$GEN_KEYS" == "oui" ]]; then
     mkdir -p "$SSH_DIR"
     chmod 700 "$SSH_DIR"
 
-    # Backup des anciennes cles (pour remplacement eventuel APRES le test)
+    # TOUJOURS faire un backup des cles existantes avant modification (pour rollback)
+    if [[ -f "$SSH_DIR/authorized_keys" ]]; then
+        AUTH_KEYS_ORIGINAL="$SSH_DIR/authorized_keys.original_$TIMESTAMP"
+        cp "$SSH_DIR/authorized_keys" "$AUTH_KEYS_ORIGINAL"
+        ok "Backup cles existantes : $AUTH_KEYS_ORIGINAL"
+        register_action "ssh_keys"
+    fi
+
+    # Backup supplementaire pour remplacement (si demande)
     if [[ "${REPLACE_KEYS:-non}" == "oui" && -f "$SSH_DIR/authorized_keys" ]]; then
         AUTH_KEYS_BAK="$SSH_DIR/authorized_keys.bak_$TIMESTAMP"
         cp "$SSH_DIR/authorized_keys" "$AUTH_KEYS_BAK"
-        ok "Backup anciennes cles : $AUTH_KEYS_BAK"
         info "Les anciennes cles seront supprimees APRES validation du test"
     fi
 
