@@ -425,34 +425,37 @@ prompt_with_help SSH_PORT \
 ok "Port SSH : $SSH_PORT"
 
 #-------------------------------------------------------------------------------
-# ETAPE 4 : Restriction IP (optionnel)
+# ETAPE 4 : Restriction IP pour Coolify (optionnel)
 #-------------------------------------------------------------------------------
-section "ETAPE 4/6 : Restriction d'acces (optionnel)"
+section "ETAPE 4/6 : Restriction d'acces Coolify (optionnel)"
 
 if [[ "$VPS_MODE" == "remote" ]]; then
-    show_explanation "Restreindre l'acces SSH" \
-"Pour un serveur Remote Coolify, vous pouvez restreindre SSH a l'IP de votre serveur Master.
-Cela empeche toute connexion SSH depuis une autre IP."
+    show_explanation "Restreindre le port 22 (Coolify uniquement)" \
+"IMPORTANT: Votre port SSH personnalise ($SSH_PORT) restera ouvert a tous !
+Vous pourrez toujours vous connecter depuis n'importe ou.
+
+Cette option restreint UNIQUEMENT le port 22, utilise par Coolify Master
+pour deployer sur ce serveur. C'est une securite supplementaire."
 
     prompt_with_help SSH_ALLOWED_IPS \
-        "IP(s) autorisees pour SSH (laissez vide pour toutes)" \
+        "IP du serveur Coolify Master (pour restreindre le port 22)" \
         "" \
-        "Entrez l'IP de votre serveur Coolify Master, ou laissez vide.
-Plusieurs IPs separees par des espaces: 1.2.3.4 5.6.7.8" \
+        "Entrez l'IP de votre serveur Coolify Master, ou laissez vide pour ouvrir a tous.
+Votre port SSH $SSH_PORT restera accessible depuis partout." \
         validate_ip_list
+elif [[ "$VPS_MODE" == "master" ]]; then
+    # Pas de restriction en mode master
+    SSH_ALLOWED_IPS=""
 else
-    prompt_with_help SSH_ALLOWED_IPS \
-        "IP(s) autorisees pour SSH (laissez vide pour toutes)" \
-        "" \
-        "Laissez vide pour autoriser toutes les IPs, ou entrez vos IPs.
-Plusieurs IPs separees par des espaces: 1.2.3.4 5.6.7.8" \
-        validate_ip_list
+    # Mode standard - pas de port 22
+    SSH_ALLOWED_IPS=""
 fi
 
 if [[ -n "$SSH_ALLOWED_IPS" ]]; then
-    ok "Acces SSH restreint a : $SSH_ALLOWED_IPS"
+    ok "Port 22 (Coolify) restreint a : $SSH_ALLOWED_IPS"
+    ok "Port $SSH_PORT (vous) : ouvert a tous"
 else
-    ok "Acces SSH : toutes les IPs"
+    ok "Ports SSH : ouverts a tous"
 fi
 
 #-------------------------------------------------------------------------------
@@ -866,16 +869,9 @@ ufw allow 80/tcp comment 'HTTP' >/dev/null 2>&1
 ufw allow 443/tcp comment 'HTTPS' >/dev/null 2>&1
 ok "Ports HTTP/HTTPS ouverts (80, 443)"
 
-# SSH personnalise
-if [[ -n "$SSH_ALLOWED_IPS" ]]; then
-    for ip in $SSH_ALLOWED_IPS; do
-        ufw allow from "$ip" to any port "$SSH_PORT" proto tcp comment "SSH custom" >/dev/null 2>&1
-    done
-    info "SSH port $SSH_PORT restreint aux IPs : $SSH_ALLOWED_IPS"
-else
-    ufw allow "$SSH_PORT"/tcp comment 'SSH custom' >/dev/null 2>&1
-    info "SSH port $SSH_PORT ouvert"
-fi
+# SSH personnalise - TOUJOURS ouvert a tous (sinon on se bloque!)
+ufw allow "$SSH_PORT"/tcp comment 'SSH custom' >/dev/null 2>&1
+ok "SSH port $SSH_PORT ouvert (acces depuis partout)"
 
 # Port 22 pour Coolify (modes master et remote)
 case "$VPS_MODE" in
@@ -889,12 +885,12 @@ case "$VPS_MODE" in
         info "Ports Coolify ouverts (8000, 6001, 6002) - a fermer apres config domaine"
         ;;
     remote)
-        # En mode remote, on peut restreindre le port 22 a l'IP du master
+        # En mode remote, le port 22 peut etre restreint a l'IP du master Coolify
         if [[ -n "$SSH_ALLOWED_IPS" ]]; then
             for ip in $SSH_ALLOWED_IPS; do
                 ufw allow from "$ip" to any port 22 proto tcp comment "SSH Coolify Master" >/dev/null 2>&1
             done
-            info "Port 22 restreint aux IPs Coolify Master"
+            info "Port 22 restreint a Coolify Master : $SSH_ALLOWED_IPS"
         else
             ufw allow 22/tcp comment 'SSH Coolify' >/dev/null 2>&1
             info "Port 22 ouvert (Coolify Remote)"
