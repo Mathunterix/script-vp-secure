@@ -8,6 +8,8 @@ Script de securisation VPS pour vibecoders. Configure un serveur securise en 5 m
 sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/Mathunterix/script-vp-secure/main/script-vps-secure-coolify-v6.sh)"
 ```
 
+> **Attention au copier-coller :** Si vous copiez cette commande depuis Google Docs, Notion ou un autre editeur de texte riche, les tirets `-` peuvent etre remplaces par des tirets typographiques unicode qui ne fonctionnent pas dans le terminal. Copiez toujours depuis ce README GitHub ou retapez manuellement les tirets.
+
 ---
 
 ## Differences Master vs Remote
