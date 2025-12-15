@@ -175,6 +175,13 @@ echo "CLE_PUBLIQUE_COOLIFY" >> /root/.ssh/authorized_keys
 
 ## Changelog
 
+### v6.1 (2025-12-15)
+- **Rollback bulletproof** :
+  - Rollback en ordre inverse (LIFO) pour une restauration propre
+  - Capture Ctrl+C, fermeture session SSH, kill -> rollback automatique
+  - Lock file pour empecher les executions simultanees
+  - Nettoyage automatique du lock file meme en cas d'erreur
+
 ### v6.0 (2025-12-09)
 - Option AJOUTER ou REMPLACER les cles SSH existantes
 - Detection automatique des cles existantes

@@ -2,7 +2,7 @@
 #===============================================================================
 # script-vps-secure-coolify-v6.sh
 # Securisation VPS compatible Coolify (Master ou Remote)
-# Version : 6.0 (2025-12-09)
+# Version : 6.1 (2025-12-15)
 #
 # Fonctionnalites :
 # - Creation utilisateur SSH securise avec cle ED25519
@@ -74,7 +74,7 @@ show_banner() {
     echo " |____/ \\___|\\___|\\__,_|_|  |_|\\__|\\__, |    \\_/  |_|   |____/ "
     echo "                                   |___/                        "
     echo -e "${NC}"
-    echo -e "${DIM}Script de securisation VPS compatible Coolify v6.0${NC}"
+    echo -e "${DIM}Script de securisation VPS compatible Coolify v6.1${NC}"
     echo -e "${DIM}Auteur: Formation Vibecoding${NC}"
     echo ""
 }
@@ -199,6 +199,19 @@ prompt_yn() {
 # VERIFICATIONS PRELIMINAIRES
 #===============================================================================
 [[ $EUID -eq 0 ]] || die "Ce script doit etre lance en root : sudo bash $0"
+
+# Lock file pour eviter les executions simultanees
+LOCK_FILE="/tmp/vps-secure.lock"
+if [[ -f "$LOCK_FILE" ]]; then
+    LOCK_PID=$(cat "$LOCK_FILE" 2>/dev/null)
+    if kill -0 "$LOCK_PID" 2>/dev/null; then
+        die "Script deja en cours d'execution (PID: $LOCK_PID). Si ce n'est pas le cas, supprimez $LOCK_FILE"
+    else
+        warn "Lock file orphelin detecte, suppression..."
+        rm -f "$LOCK_FILE"
+    fi
+fi
+echo $$ > "$LOCK_FILE"
 
 # Detecter l'OS
 if [[ -f /etc/os-release ]]; then
@@ -588,11 +601,29 @@ ACTIONS_DONE=()
 
 register_action() { ACTIONS_DONE+=("$1"); }
 
+# Variable pour savoir si le script s'est termine proprement
+SCRIPT_COMPLETED=false
+
+# Fonction de nettoyage appelee a la sortie du script
+cleanup() {
+    local exit_code=$?
+    # Supprimer le lock file
+    rm -f "$LOCK_FILE" 2>/dev/null
+
+    # Si le script ne s'est pas termine proprement et qu'il y a des actions a rollback
+    if [[ "$SCRIPT_COMPLETED" != "true" && ${#ACTIONS_DONE[@]} -gt 0 ]]; then
+        rollback
+    fi
+    exit $exit_code
+}
+
 rollback() {
     echo ""
     warn "Probleme detecte. Rollback en cours..."
 
-    for action in "${ACTIONS_DONE[@]}"; do
+    # Parcourir en ordre inverse (LIFO) pour un rollback propre
+    for ((i=${#ACTIONS_DONE[@]}-1; i>=0; i--)); do
+        action="${ACTIONS_DONE[i]}"
         case "$action" in
             ssh)
                 [[ -f "$SSHD_BAK" ]] && cp -f "$SSHD_BAK" "$SSHD_CFG"
@@ -633,7 +664,9 @@ rollback() {
     exit 1
 }
 
-trap 'rollback' ERR
+# Trap pour gerer les erreurs et interruptions
+trap 'cleanup' EXIT                # Toujours appele a la sortie
+trap 'exit 1' INT TERM HUP ERR     # Ctrl+C, kill, fermeture session, erreur -> declenche EXIT
 
 #===============================================================================
 # INSTALLATION DES PAQUETS
@@ -948,8 +981,8 @@ EOF
     info "ICMP limite"
 fi
 
-sysctl --system >/dev/null 2>&1
 register_action "sysctl"
+sysctl --system >/dev/null 2>&1
 ok "Sysctl configure"
 
 #===============================================================================
@@ -976,9 +1009,9 @@ findtime = 10m
 backend = %(sshd_backend)s
 EOF
 
+register_action "fail2ban"
 systemctl restart fail2ban >/dev/null 2>&1
 systemctl enable fail2ban >/dev/null 2>&1 || true
-register_action "fail2ban"
 ok "Fail2Ban configure (protection ports : $F2B_PORTS)"
 
 #===============================================================================
@@ -1138,4 +1171,5 @@ elif [[ "$VPS_MODE" == "remote" ]]; then
 fi
 
 echo ""
+SCRIPT_COMPLETED=true
 ok "Script termine. Bonne continuation !"
