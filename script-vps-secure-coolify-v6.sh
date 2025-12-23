@@ -2,7 +2,7 @@
 #===============================================================================
 # script-vps-secure-coolify-v6.sh
 # Securisation VPS compatible Coolify (Master ou Remote)
-# Version : 6.1 (2025-12-15)
+# Version : 6.2 (2025-12-23)
 #
 # Fonctionnalites :
 # - Creation utilisateur SSH securise avec cle ED25519
@@ -74,7 +74,7 @@ show_banner() {
     echo " |____/ \\___|\\___|\\__,_|_|  |_|\\__|\\__, |    \\_/  |_|   |____/ "
     echo "                                   |___/                        "
     echo -e "${NC}"
-    echo -e "${DIM}Script de securisation VPS compatible Coolify v6.1${NC}"
+    echo -e "${DIM}Script de securisation VPS compatible Coolify v6.2${NC}"
     echo -e "${DIM}Auteur: Formation Vibecoding${NC}"
     echo ""
 }
@@ -1019,20 +1019,55 @@ ok "Fail2Ban configure (protection ports : $F2B_PORTS)"
 #===============================================================================
 header "Application de la configuration SSH"
 
-systemctl reload "$SSH_SERVICE" 2>/dev/null || systemctl restart "$SSH_SERVICE"
+# Ubuntu 22.04+ utilise ssh.socket (systemd socket activation)
+# Il faut le desactiver pour utiliser un port personnalise
+if systemctl is-active ssh.socket >/dev/null 2>&1; then
+    info "Desactivation de ssh.socket (incompatible avec port personnalise)..."
+    systemctl stop ssh.socket 2>/dev/null || true
+    systemctl disable ssh.socket 2>/dev/null || true
+    # Supprimer le fichier override si present
+    rm -f /etc/systemd/system/ssh.socket.d/*.conf 2>/dev/null || true
+    systemctl daemon-reload 2>/dev/null || true
+    ok "ssh.socket desactive"
+fi
+
+# S'assurer que le service SSH est bien active
+systemctl enable "$SSH_SERVICE" 2>/dev/null || true
+
+# Redemarrer SSH (pas reload car on a change les ports)
+info "Redemarrage du service SSH..."
+systemctl restart "$SSH_SERVICE" 2>&1 || {
+    err "Echec du redemarrage SSH. Details :"
+    systemctl status "$SSH_SERVICE" --no-pager -l 2>&1 | head -20 || true
+    rollback
+}
 
 # Verifier que SSH ecoute sur le bon port
-sleep 2
+sleep 3
 if ss -tuln | grep -q ":$SSH_PORT "; then
     ok "SSH actif sur le port $SSH_PORT"
 else
-    warn "SSH ne semble pas ecouter sur $SSH_PORT, tentative de restart..."
-    systemctl restart "$SSH_SERVICE"
-    sleep 2
+    warn "SSH ne semble pas ecouter sur $SSH_PORT, diagnostic..."
+
+    # Afficher les erreurs du journal
+    info "Derniers logs SSH :"
+    journalctl -u "$SSH_SERVICE" --no-pager -n 10 2>&1 || true
+
+    # Verifier la config
+    info "Verification de la configuration :"
+    sshd -t 2>&1 || true
+
+    # Deuxieme tentative
+    warn "Deuxieme tentative de redemarrage..."
+    systemctl restart "$SSH_SERVICE" 2>&1 || true
+    sleep 3
+
     if ss -tuln | grep -q ":$SSH_PORT "; then
         ok "SSH maintenant actif sur le port $SSH_PORT"
     else
-        err "Probleme avec SSH"
+        err "Probleme avec SSH - le service ne demarre pas sur le port $SSH_PORT"
+        info "Ports SSH actuellement ouverts :"
+        ss -tuln | grep -E ":(22|$SSH_PORT) " || echo "Aucun"
         rollback
     fi
 fi
