@@ -1125,13 +1125,22 @@ echo ""
 echo -e "${RED}NE FERMEZ PAS cette session avant d'avoir teste la nouvelle connexion !${NC}"
 echo ""
 
-# Confirmation finale
-prompt_yn TEST_OK \
-    "La nouvelle connexion fonctionne ?" \
-    "non" \
-    "Repondez 'oui' uniquement si vous avez teste avec succes"
+# Confirmation finale - securisee contre auto-validation
+# Vider le buffer stdin pour eviter que des touches residuelles valident
+read -t 0.1 -n 10000 discard 2>/dev/null || true
 
-if [[ "$TEST_OK" != "oui" ]]; then
+echo ""
+echo -e "${RED}${BOLD}=================================================================${NC}"
+echo -e "${RED}${BOLD}  CONFIRMATION OBLIGATOIRE${NC}"
+echo -e "${RED}${BOLD}=================================================================${NC}"
+echo ""
+echo -e "${YELLOW}Tapez exactement ${BOLD}CONFIRMER${NC}${YELLOW} si la connexion fonctionne.${NC}"
+echo -e "${YELLOW}Tapez n'importe quoi d'autre (ou Entree) pour annuler et rollback.${NC}"
+echo ""
+echo -en "${CYAN}Votre reponse${NC}: "
+read -r CONFIRM_RESPONSE
+
+if [[ "$CONFIRM_RESPONSE" != "CONFIRMER" ]]; then
     warn "Connexion non confirmee. Rollback..."
     rollback
     exit 1
