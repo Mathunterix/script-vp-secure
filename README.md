@@ -16,7 +16,7 @@ sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/Mathunterix/script-
 
 | Configuration        | MASTER                        | REMOTE                        |
 |---------------------|-------------------------------|-------------------------------|
-| Port 22             | OUVERT (obligatoire)          | OUVERT (pour Coolify)         |
+| Port 22             | Docker only (local)           | OUVERT (pour Coolify)         |
 | host.docker.internal| OUI (obligatoire)             | NON (pas necessaire)          |
 | Ports 8000/6001/6002| OUVERTS (dashboard)           | NON                           |
 | Docker              | Pre-installe par vous         | Installe auto par Coolify     |

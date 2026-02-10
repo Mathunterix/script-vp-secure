@@ -17,7 +17,7 @@
 # ┌─────────────────────┬─────────────────────┬─────────────────────┐
 # │                     │ MASTER              │ REMOTE              │
 # ├─────────────────────┼─────────────────────┼─────────────────────┤
-# │ Port 22             │ Ouvert (obligatoire)│ Ouvert (pour Coolify│
+# │ Port 22             │ Docker only (local) │ Ouvert (pour Coolify│
 # │ host.docker.internal│ OUI (obligatoire)   │ NON (pas necessaire)│
 # │ Ports 8000/6001/6002│ Ouverts (dashboard) │ NON                 │
 # │ Docker              │ Pre-installe        │ Installe par Coolify│
@@ -909,8 +909,8 @@ ok "SSH port $SSH_PORT ouvert (acces depuis partout)"
 # Port 22 pour Coolify (modes master et remote)
 case "$VPS_MODE" in
     master)
-        ufw allow 22/tcp comment 'SSH Coolify' >/dev/null 2>&1
-        info "Port 22 ouvert (Coolify Master)"
+        ufw allow from 172.17.0.0/16 to any port 22 proto tcp comment 'SSH Coolify (Docker only)' >/dev/null 2>&1
+        info "Port 22 restreint au reseau Docker (Coolify Master)"
         # Ports dashboard Coolify (temporaires)
         ufw allow 8000/tcp comment 'Coolify Dashboard' >/dev/null 2>&1
         ufw allow 6001/tcp comment 'Coolify Realtime' >/dev/null 2>&1
