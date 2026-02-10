@@ -909,7 +909,7 @@ ok "SSH port $SSH_PORT ouvert (acces depuis partout)"
 # Port 22 pour Coolify (modes master et remote)
 case "$VPS_MODE" in
     master)
-        ufw allow from 172.17.0.0/16 to any port 22 proto tcp comment 'SSH Coolify (Docker only)' >/dev/null 2>&1
+        ufw allow from 172.16.0.0/12 to any port 22 proto tcp comment 'SSH Coolify (Docker only)' >/dev/null 2>&1
         info "Port 22 restreint au reseau Docker (Coolify Master)"
         # Ports dashboard Coolify (temporaires)
         ufw allow 8000/tcp comment 'Coolify Dashboard' >/dev/null 2>&1
