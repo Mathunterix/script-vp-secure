@@ -361,7 +361,7 @@ case "$VPS_MODE" in
         echo -e "${BLUE}${BOLD}Configuration Master Coolify :${NC}"
         echo ""
         echo "  ┌────────────────────────┬─────────────────────────────────┐"
-        echo "  │ Port 22                │ OUVERT (obligatoire Coolify)    │"
+        echo "  │ Port 22                │ LOCAL (Docker uniquement)       │"
         echo "  │ host.docker.internal   │ CONFIGURE (obligatoire)         │"
         echo "  │ Ports 8000/6001/6002   │ OUVERTS (fermer apres domaine)  │"
         echo "  │ Root SSH               │ Via cle uniquement              │"
@@ -420,9 +420,9 @@ RANDOM_PORT=$(generate_random_port)
 
 if [[ "$VPS_MODE" == "master" ]]; then
     show_explanation "Port SSH personnalise" \
-"ATTENTION Mode Master: Le port 22 restera ouvert pour Coolify.
+"Mode Master: Le port 22 est restreint au reseau Docker local (invisible depuis Internet).
 Votre port personnalise sera utilise pour VOS connexions SSH.
-Coolify utilisera le port 22 en interne."
+Coolify utilisera le port 22 en interne via Docker uniquement."
 else
     show_explanation "Port SSH personnalise" \
 "Changer le port SSH reduit de 90% les scans automatises.
