@@ -1,17 +1,22 @@
 #!/usr/bin/env bash
 #===============================================================================
 # securisation-post-coolify.sh
-# Fermeture des ports d'administration Coolify apres config HTTPS
-# Version : 1.0 (2026-03-06)
+# Fermeture des ports d'administration Coolify + ports base de donnees
+# Version : 2.0 (2026-03-06)
 #
 # A lancer APRES :
 #   1. script-vps-secure-coolify-v7.sh (securisation VPS)
 #   2. Installation de Coolify (curl ... | sudo bash)
 #   3. Configuration du domaine HTTPS dans Coolify (FQDN)
+#   4. (Optionnel) Installation de Supabase dans Coolify
 #
-# Ce script ferme les ports 8000, 6001, 6002 qui etaient ouverts
-# temporairement pour l'installation de Coolify.
-# Double protection : UFW (INPUT) + DOCKER-USER (FORWARD/iptables)
+# Ce script :
+#   - Ferme les ports 8000, 6001, 6002 (administration Coolify)
+#   - Ferme les ports 5432, 6543 (base de donnees) depuis Internet
+#     tout en laissant les containers Docker y acceder
+#
+# Le script est idempotent : vous pouvez le relancer sans risque
+# (par exemple apres avoir installe Supabase).
 #
 # Usage : sudo bash securisation-post-coolify.sh
 #===============================================================================
@@ -132,7 +137,7 @@ show_banner() {
     echo " |_|   \\___/|___/\\__|    \\____\\___/ \\___/|_|_|_|  \\__, |"
     echo "                                                   |___/ "
     echo -e "${NC}"
-    echo -e "${DIM}Fermeture des ports d'administration Coolify v1.0${NC}"
+    echo -e "${DIM}Securisation post-installation Coolify v2.0${NC}"
     echo ""
 }
 
@@ -146,6 +151,12 @@ command -v docker >/dev/null 2>&1 || die "Docker non detecte. Coolify est-il ins
 
 # Verifier que UFW est actif
 ufw status | grep -q "Status: active" || die "UFW n'est pas actif. Le script V7 a-t-il ete lance ?"
+
+# Detecter l'interface reseau principale (pour les regles iptables DB)
+MAIN_IFACE=$(ip route | grep default | awk '{print $5}' | head -1)
+if [[ -z "$MAIN_IFACE" ]]; then
+    die "Impossible de detecter l'interface reseau principale."
+fi
 
 #===============================================================================
 # ETAPE 1 : FQDN COOLIFY
@@ -181,7 +192,30 @@ else
 fi
 
 #===============================================================================
-# ETAPE 2 : DETECTION PORT SSH
+# ETAPE 2 : DETECTION SUPABASE
+#===============================================================================
+header "Detection des services"
+
+# Detecter si Supabase est installe
+SUPABASE_DETECTED="non"
+if docker ps --format '{{.Names}}' 2>/dev/null | grep -qi "supabase"; then
+    SUPABASE_DETECTED="oui"
+    ok "Supabase detecte"
+else
+    info "Supabase non detecte (pas encore installe, ou noms de containers differents)"
+    prompt_yn SUPABASE_DETECTED \
+        "Supabase est-il installe sur ce serveur ?" \
+        "non" \
+        "Si vous n'avez pas encore installe Supabase, repondez non.
+Vous pourrez relancer ce script plus tard apres l'installation."
+fi
+
+if [[ "$SUPABASE_DETECTED" == "oui" ]]; then
+    info "Les ports base de donnees (5432, 6543) seront aussi proteges"
+fi
+
+#===============================================================================
+# ETAPE 3 : DETECTION PORT SSH
 #===============================================================================
 SSH_PORT_DETECTED=$(grep -E "^Port " /etc/ssh/sshd_config | head -1 | awk '{print $2}')
 # Si plusieurs ports, prendre le premier qui n'est pas 22
@@ -192,6 +226,7 @@ for p in $(grep -E "^Port " /etc/ssh/sshd_config | awk '{print $2}'); do
     fi
 done
 info "Port SSH detecte : ${SSH_PORT_DETECTED:-22}"
+info "Interface reseau : $MAIN_IFACE"
 
 #===============================================================================
 # RESUME ET CONFIRMATION
@@ -200,14 +235,23 @@ header "Resume"
 
 echo "  FQDN Coolify     : https://$COOLIFY_FQDN"
 echo "  Port SSH          : ${SSH_PORT_DETECTED:-22}"
+echo "  Interface reseau  : $MAIN_IFACE"
+echo "  Supabase          : $SUPABASE_DETECTED"
 echo ""
 echo -e "${BOLD}Actions a effectuer :${NC}"
 echo "  1. Fermer le port 8000 (dashboard Coolify)"
 echo "  2. Fermer le port 6001 (WebSocket realtime)"
 echo "  3. Fermer le port 6002 (terminal/metriques)"
+if [[ "$SUPABASE_DETECTED" == "oui" ]]; then
+echo "  4. Bloquer l'acces externe au port 5432 (PostgreSQL)"
+echo "  5. Bloquer l'acces externe au port 6543 (Pooler)"
+echo ""
+echo -e "${DIM}Les ports DB restent accessibles pour les containers Docker${NC}"
+echo -e "${DIM}(ton app sur le meme VPS peut se connecter normalement).${NC}"
+fi
 echo ""
 
-prompt_yn CONFIRM "Lancer la fermeture des ports ?" "oui"
+prompt_yn CONFIRM "Lancer la securisation ?" "oui"
 [[ "$CONFIRM" == "oui" ]] || die "Annule par l'utilisateur."
 
 #===============================================================================
@@ -228,9 +272,9 @@ iptables-save > "$IPTABLES_BAK" 2>/dev/null || true
 ok "Backup iptables : $IPTABLES_BAK"
 
 #===============================================================================
-# FERMETURE DES PORTS
+# FERMETURE DES PORTS ADMIN COOLIFY
 #===============================================================================
-header "Fermeture des ports d'administration"
+header "Fermeture des ports d'administration Coolify"
 
 # 1. UFW : retirer les allow et ajouter des deny
 section "Protection UFW (INPUT)"
@@ -243,7 +287,7 @@ for port in 8000 6001 6002; do
     ok "Port $port ferme (UFW)"
 done
 
-# 2. DOCKER-USER : bloquer le forwarding Docker
+# 2. DOCKER-USER : bloquer le forwarding Docker pour les ports admin
 section "Protection DOCKER-USER (iptables/FORWARD)"
 
 # Auto-detecter le port interne du container Coolify pour le dashboard
@@ -270,6 +314,33 @@ for port in $DOCKER_PORTS_TO_BLOCK; do
     fi
 done
 
+#===============================================================================
+# FERMETURE DES PORTS BASE DE DONNEES (si Supabase installe)
+#===============================================================================
+if [[ "$SUPABASE_DETECTED" == "oui" ]]; then
+    header "Protection des ports base de donnees"
+
+    echo -e "${DIM}Ces regles bloquent l'acces DEPUIS INTERNET uniquement.${NC}"
+    echo -e "${DIM}Ton app (container Docker sur le meme VPS) peut toujours se connecter.${NC}"
+    echo ""
+
+    for port in 5432 6543; do
+        # Bloquer uniquement le trafic venant de l'interface externe
+        # Les containers Docker passent par les interfaces bridge (br-xxx, docker0)
+        # donc ils ne sont PAS affectes par cette regle
+        if ! iptables -C DOCKER-USER -i "$MAIN_IFACE" -p tcp --dport "$port" -j DROP 2>/dev/null; then
+            iptables -I DOCKER-USER -i "$MAIN_IFACE" -p tcp --dport "$port" -j DROP
+            ok "Port $port bloque depuis Internet (interface $MAIN_IFACE)"
+        else
+            ok "Port $port deja bloque depuis Internet"
+        fi
+    done
+
+    echo ""
+    info "Pour acceder a la base depuis ton ordi, utilise un tunnel SSH :"
+    echo -e "  ${DIM}ssh -L 5432:localhost:5432 -L 6543:localhost:6543 -p ${SSH_PORT_DETECTED:-22} USER@IP_VPS -N${NC}"
+fi
+
 # Sauvegarder iptables
 netfilter-persistent save 2>/dev/null || true
 ok "Regles iptables sauvegardees"
@@ -290,6 +361,11 @@ echo ""
 echo -e "  3. ${BOLD}Port 8000 ferme :${NC}"
 echo -e "     Ouvrez http://IP_DU_VPS:8000 -> doit etre inaccessible"
 echo ""
+if [[ "$SUPABASE_DETECTED" == "oui" ]]; then
+echo -e "  4. ${BOLD}Port 5432 ferme depuis Internet :${NC}"
+echo -e "     Depuis votre ordi : nc -zv IP_DU_VPS 5432 -> doit echouer"
+echo ""
+fi
 
 #===============================================================================
 # CONFIRMATION AVEC AUTO-ROLLBACK 5 MIN
@@ -332,7 +408,7 @@ ok "Configuration validee et permanente !"
 #===============================================================================
 # INSTRUCTIONS FINALES
 #===============================================================================
-header "Ports d'administration Coolify fermes"
+header "Securisation terminee"
 
 echo -e "${GREEN}${BOLD}Votre VPS n'expose plus que :${NC}"
 echo ""
@@ -342,6 +418,13 @@ echo "  │ Port 80                │ HTTP (redirige vers HTTPS)      │"
 echo "  │ Port 443               │ HTTPS (Coolify + vos services)  │"
 echo "  └────────────────────────┴─────────────────────────────────┘"
 echo ""
+if [[ "$SUPABASE_DETECTED" == "oui" ]]; then
+echo -e "${DIM}Ports base de donnees (5432, 6543) :${NC}"
+echo -e "${DIM}  - Bloques depuis Internet${NC}"
+echo -e "${DIM}  - Accessibles par vos apps Docker sur ce VPS${NC}"
+echo -e "${DIM}  - Accessibles via tunnel SSH depuis votre ordi${NC}"
+echo ""
+fi
 echo -e "${DIM}Pour rouvrir temporairement le port 8000 :${NC}"
 echo "  sudo ufw delete deny 8000/tcp && sudo ufw allow 8000/tcp"
 echo "  sudo iptables -D DOCKER-USER -p tcp --dport 8080 -j DROP"
