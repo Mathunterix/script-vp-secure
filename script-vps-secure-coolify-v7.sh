@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #===============================================================================
-# script-vps-secure-coolify-v6.sh
+# script-vps-secure-coolify-v7.sh
 # Securisation VPS compatible Coolify (Master ou Remote)
-# Version : 6.2 (2025-12-23)
+# Version : 7.0 (2026-03-06)
 #
 # Fonctionnalites :
 # - Creation utilisateur SSH securise avec cle ED25519
@@ -12,6 +12,7 @@
 # - Fail2Ban pour protection brute-force
 # - Unattended-upgrades pour mises a jour de securite automatiques
 # - Rollback automatique en cas de probleme
+# - Auto-rollback apres 5 minutes sans confirmation
 #
 # DIFFERENCES MASTER vs REMOTE :
 # ┌─────────────────────┬─────────────────────┬─────────────────────┐
@@ -24,7 +25,7 @@
 # │ Root SSH            │ Via cle             │ Via cle             │
 # └─────────────────────┴─────────────────────┴─────────────────────┘
 #
-# Usage : sudo bash script-vps-secure-coolify-v5.sh
+# Usage : sudo bash script-vps-secure-coolify-v7.sh
 #===============================================================================
 
 set -euo pipefail
@@ -74,7 +75,7 @@ show_banner() {
     echo " |____/ \\___|\\___|\\__,_|_|  |_|\\__|\\__, |    \\_/  |_|   |____/ "
     echo "                                   |___/                        "
     echo -e "${NC}"
-    echo -e "${DIM}Script de securisation VPS compatible Coolify v6.2${NC}"
+    echo -e "${DIM}Script de securisation VPS compatible Coolify v7.0${NC}"
     echo -e "${DIM}Auteur: Formation Vibecoding${NC}"
     echo ""
 }
@@ -547,6 +548,11 @@ prompt_yn LIMIT_ICMP \
     "oui" \
     "Limite les informations disponibles pour les scanners"
 
+prompt_yn ADD_SWAP \
+    "Ajouter 2 Go de swap ?" \
+    "oui" \
+    "Recommande pour les petits VPS. Le swap evite les crashes lors de pics de charge."
+
 #-------------------------------------------------------------------------------
 # RESUME ET CONFIRMATION
 #-------------------------------------------------------------------------------
@@ -571,6 +577,7 @@ echo "  Fail2Ban          : Oui"
 echo "  Updates auto      : Oui"
 echo "  Desactiver IPv6   : $DISABLE_IPV6"
 echo "  Limiter ICMP      : $LIMIT_ICMP"
+echo "  Swap 2 Go         : $ADD_SWAP"
 echo ""
 
 # Avertissement UFW + Docker
@@ -720,6 +727,36 @@ AUTOUPGRADES
         ;;
 esac
 ok "Mises a jour de securite automatiques configurees"
+
+#===============================================================================
+# SWAP (2 Go)
+#===============================================================================
+if [[ "$ADD_SWAP" == "oui" ]]; then
+    header "Configuration du Swap"
+
+    if swapon --show 2>/dev/null | grep -q "/swapfile"; then
+        ok "Swap deja configure (/swapfile)"
+    else
+        if [[ -f /swapfile ]]; then
+            warn "Fichier /swapfile existe deja, activation..."
+        else
+            info "Creation du fichier swap de 2 Go..."
+            fallocate -l 2G /swapfile 2>/dev/null || dd if=/dev/zero of=/swapfile bs=1M count=2048 status=none
+            ok "Fichier swap cree"
+        fi
+
+        chmod 600 /swapfile
+        mkswap /swapfile >/dev/null 2>&1
+        swapon /swapfile
+
+        # Persister dans fstab
+        if ! grep -q "/swapfile" /etc/fstab; then
+            echo "/swapfile none swap sw 0 0" >> /etc/fstab
+        fi
+
+        ok "Swap active (2 Go)"
+    fi
+fi
 
 #===============================================================================
 # CREATION DE L'UTILISATEUR
@@ -913,10 +950,14 @@ case "$VPS_MODE" in
         ufw allow from 10.0.0.0/8 to any port 22 proto tcp comment 'SSH Coolify Docker 10.x' >/dev/null 2>&1
         info "Port 22 restreint aux reseaux Docker locaux (Coolify Master)"
         # Ports dashboard Coolify (temporaires)
-        ufw allow 8000/tcp comment 'Coolify Dashboard' >/dev/null 2>&1
-        ufw allow 6001/tcp comment 'Coolify Realtime' >/dev/null 2>&1
-        ufw allow 6002/tcp comment 'Coolify Terminal' >/dev/null 2>&1
-        info "Ports Coolify ouverts (8000, 6001, 6002) - a fermer apres config domaine"
+        ufw allow 8000/tcp comment 'Coolify Dashboard TEMPORAIRE' >/dev/null 2>&1
+        ufw allow 6001/tcp comment 'Coolify Realtime TEMPORAIRE' >/dev/null 2>&1
+        ufw allow 6002/tcp comment 'Coolify Terminal TEMPORAIRE' >/dev/null 2>&1
+        echo ""
+        warn "Ports Coolify 8000, 6001, 6002 ouverts TEMPORAIREMENT"
+        warn "Ils DOIVENT etre fermes apres configuration du domaine HTTPS"
+        warn "Utilisez le Script 2 (securisation-post-coolify.sh) pour cela"
+        echo ""
         ;;
     remote)
         # En mode remote, le port 22 peut etre restreint a l'IP du master Coolify
@@ -980,6 +1021,14 @@ net.ipv4.icmp_ratelimit = 100
 net.ipv4.icmp_ratemask = 88089
 EOF
     info "ICMP limite"
+fi
+
+if [[ "$ADD_SWAP" == "oui" ]]; then
+    cat >> "$SYSCTL_FILE" <<'EOF'
+# Swap - privilegier la RAM, swap en dernier recours
+vm.swappiness = 10
+EOF
+    info "Swappiness configuree (10)"
 fi
 
 register_action "sysctl"
@@ -1132,14 +1181,23 @@ read -t 0.1 -n 10000 discard 2>/dev/null || true
 
 echo ""
 echo -e "${RED}${BOLD}=================================================================${NC}"
-echo -e "${RED}${BOLD}  CONFIRMATION OBLIGATOIRE${NC}"
+echo -e "${RED}${BOLD}  CONFIRMATION OBLIGATOIRE (5 minutes max)${NC}"
 echo -e "${RED}${BOLD}=================================================================${NC}"
 echo ""
 echo -e "${YELLOW}Tapez exactement ${BOLD}CONFIRMER${NC}${YELLOW} si la connexion fonctionne.${NC}"
 echo -e "${YELLOW}Tapez n'importe quoi d'autre (ou Entree) pour annuler et rollback.${NC}"
 echo ""
-echo -en "${CYAN}Votre reponse${NC}: "
-read -r CONFIRM_RESPONSE
+echo -e "${DIM}Si vous ne repondez pas dans 5 minutes, les modifications seront${NC}"
+echo -e "${DIM}automatiquement annulees (rollback de securite).${NC}"
+echo ""
+
+echo -en "${CYAN}Votre reponse (5 min max)${NC}: "
+if ! read -t 300 -r CONFIRM_RESPONSE; then
+    echo ""
+    warn "Timeout atteint (5 minutes). Rollback automatique..."
+    rollback
+    exit 1
+fi
 
 if [[ "$CONFIRM_RESPONSE" != "CONFIRMER" ]]; then
     warn "Connexion non confirmee. Rollback..."
@@ -1175,20 +1233,22 @@ fi
 if [[ "$VPS_MODE" == "master" ]]; then
     header "Prochaines etapes - Mode Master"
 
-    echo -e "${BOLD}1. Ouvrir les ports Coolify temporairement :${NC}"
-    echo "   (dans le firewall de votre cloud provider)"
-    echo "   - Port 8000 (dashboard)"
-    echo "   - Port 6001 (realtime)"
-    echo "   - Port 6002 (terminal)"
-    echo ""
-    echo -e "${BOLD}2. Installer Coolify :${NC}"
+    echo -e "${BOLD}1. Installer Coolify :${NC}"
     echo "   curl -fsSL https://cdn.coollabs.io/coolify/install.sh | sudo bash"
     echo ""
-    echo -e "${BOLD}3. Acceder au dashboard :${NC}"
+    echo -e "${BOLD}2. Acceder au dashboard :${NC}"
     echo "   http://$SERVER_IP:8000"
     echo ""
-    echo -e "${BOLD}4. Apres configuration du domaine :${NC}"
-    echo "   Fermez les ports 8000, 6001, 6002 dans votre firewall cloud"
+    echo -e "${BOLD}3. Configurer votre domaine HTTPS :${NC}"
+    echo "   Settings -> General -> FQDN -> https://coolify.votre-domaine.com"
+    echo "   Verifiez que le dashboard est accessible en HTTPS"
+    echo ""
+    echo -e "${RED}${BOLD}4. OBLIGATOIRE : Lancer le Script 2 pour fermer les ports d'admin :${NC}"
+    echo ""
+    echo -e "   ${BOLD}sudo bash securisation-post-coolify.sh${NC}"
+    echo ""
+    echo -e "${YELLOW}   Ce script fermera les ports 8000, 6001, 6002 qui sont${NC}"
+    echo -e "${YELLOW}   actuellement ouverts. Ne pas oublier cette etape !${NC}"
     echo ""
 
 elif [[ "$VPS_MODE" == "remote" ]]; then
